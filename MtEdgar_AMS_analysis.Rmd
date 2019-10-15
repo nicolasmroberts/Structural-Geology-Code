@@ -1,0 +1,707 @@
+---
+title: "Plotting and Analysis of AMS Data"
+output: html_notebook
+---
+
+<p><em>Script by Nicolas Roberts</em></p>
+
+<h2> Setup </h2>
+<ul> 
+<li> Set Working Directory </li>
+<li> Load various libraries of functions </li>
+</ul>
+```{r}
+setwd("~/Library/Mobile\ Documents/com~apple~CloudDocs/geologyGeometry")
+
+# [!!!] FOR WINDOWS: Set the working directory.
+# setwd("C:/users/[Insert user name]/Desktop/20170620geologyGeometry")
+
+# Load the necessary R libraries.
+source("library/all.R")
+source("AMS_functions.R")
+library("ggplot2")
+library("ggforce")
+
+library("imager")
+library("gstat")
+library("sp")
+library("maptools")
+library("rgdal")
+library("png")
+library("gridExtra")
+
+library("chebpol")
+library("sf")
+library("viridis")
+
+
+# library("gridExtra")
+# library("grid")
+# library("gtable")
+# library("ggpubr")
+#[!!!] Uncomment only if you have compiled C on your system and have the C libraries loaded at the top of this script. Uncomment and run the following line only if you have compiled C. # [!!!] Markov chain Monte Carlo and Kamb contouring in equal volume plots require C compiler. Skip MCMC and equal volume Kamb lines if you do not wish to install C. Load the necessary library
+#source("libraryC/all.R")
+```
+
+
+<h2> Load AMS Data </h2>
+
+
+<ul> 
+<li> Import the AMS and location .csv files </li>
+<li> Create a data frame of AMS data </li>
+</ul>
+```{r}
+#Path to AGICO txt data file
+AGICOcsvPath <- "data/pilbara/amsData_12Sept_2019.csv"
+
+
+
+#USER MODIFY:
+#the file path to the station name/location csv (see below for details on format)
+locationPath <- "data/pilbara/sampleLocations.csv"
+
+
+#load the AGICO csv file
+dataFrame <- geoDataFromFile(AGICOcsvPath, separator = ",")
+
+#This computes useful measures from the raw AGICO csv. This is the main variable which all the statistics will draw from. 
+amsData <- geoEllipsoidDataFromAGICOFile(AGICOcsvPath, separator = ",", sapply(dataFrame$Km, function(s) s*10^(-6)), doNormalize=TRUE)
+#for some reason, AGICO stores all the bulk susceptibilities as the actual susceptibility * 10^6, so this quickly corrects it.
+amsData$Km <- sapply(amsData$Km, function(s) s*10^(-6))
+
+#Loads a csv file with the location (easting, northing) information. The table needs to be formatted with headings "name", "easting", and "northing"--all lower case, no spaces. The table can include more stations than the amsData have, but must inlcude all stations in amsData. More details below. 
+locData <- read.table(locationPath, sep = ",", header=TRUE,stringsAsFactors = FALSE)
+
+```
+
+
+```{r}
+nameLength <- 9
+
+#this calls the locationPairing function and apppends location data to the amsDataset. 
+amsData <- locationPairing(amsData, locData, nameLength)
+    
+```
+
+```{r}
+ggsave("allAMSDataLineation.pdf", plotNet(amsData, showFollin = FALSE, whichAxes = "K1"))
+ggsave("allAMSDataFoliation.pdf", plotNet(amsData, showFollin = TRUE, whichAxes = "K3"))
+ggsave("allAMSHsu.pdf", plotHsu(amsData))
+plotNetStation("AME16_105", amsData)
+plotHsuStation("AME18_284", amsData)
+
+
+plotNet(amsData, showFollin = FALSE, whichAxes = "K1")
+plotNet(amsData, showFollin = TRUE, whichAxes = "K3")
+
+plotHsuSummary = function(amsData) {
+stationData <- amsData
+logAs <- lapply(stationData$logA, function(ell) ell)
+
+
+
+x <- function(logA) {-sqrt(1.5) * max(logA - sum(logA) / 3) - sqrt(1.5) * min(logA - sum(logA) / 3)}
+y <- function(logA) {sqrt(0.5) * max(logA - sum(logA) / 3) - sqrt(0.5) * min(logA - sum(logA) / 3)}
+
+lodes <- sapply(logAs, x)
+oct <- sapply(logAs, y)
+
+# the maximum octohedral shear strain
+maxEs <- 0.5
+
+# Dataframe that stores the Hsu Plot line segments that show lines of equal Lodes parameter
+lines <- data.frame(x1 = c(0,0,0), 
+                    x2 = c(maxEs*cos(pi/3),maxEs*cos(pi/2), maxEs*cos(2/3 * pi)),
+                    y1 = c(0,0,0), 
+                    y2 = c(maxEs*sin(pi/3), maxEs*sin(pi/2), maxEs*sin(2/3 * pi)),
+                    label = c(1, 0, -1),
+                    lineAlpha = c(1,.75,1)
+)
+
+# Make data frame of Hsu plot arcs of equal oct. shear strain
+# Change arcInterval to have more or fewer arcs display on the Hsu plot
+arcInterval = 0.2
+
+arcs <- data.frame(
+     start = rep(-pi/6, maxEs/arcInterval + 1),
+     end = rep(pi/6, maxEs/arcInterval + 1),
+     r = seq(from = 0, to = maxEs , by = arcInterval),
+     textX = seq(from = 0*cos(pi/3), to = maxEs*cos(pi/3), by=arcInterval * cos(pi/3)),
+     textY = seq(from = 0*sin(pi/3), to = maxEs*sin(pi/3), by=arcInterval * sin(pi/3))
+)
+
+#construct dataframe to plot
+xy <- data.frame(cbind(oct, lodes))
+
+#The Plot
+HsuPlot <-ggplot() +
+     coord_fixed(ratio = 1, ylim = c(-0.01,maxEs + 0.02), xlim = c(-maxEs/2 -0.01,maxEs/2 + 0.01)) +
+     #plot the arcs and label them
+     geom_arc(aes(x0 = 0, y0 = 0, r = r, start = start, end = end, alpha = 0.9), linetype = 1, color = "dark grey", data = arcs, show.legend = FALSE) +
+     geom_text(aes(x=textX, y=textY,label = r,angle = -30), size = 2.75, family = "Helvetica", nudge_x = 0.01, nudge_y = -0.01, data = arcs)+
+     geom_arc(aes(x0=0,y0=0, r= maxEs, start = - pi/6, end = pi/6), linetype = 1, show.legend = FALSE) +     
+     #plot lines of equal lodes parameter and label them
+     geom_segment(aes(x = x1, y = y1, xend = x2, yend = y2, alpha = lineAlpha), linetype = 1, data = lines, show.legend = FALSE) +
+     geom_text(aes(x=x2, y=y2,label = label, vjust = -0.5, family = "Helvetica"), size = 2.75, data = lines) +
+     #geom_text(aes(x=x, y=y, label = labels, angle = angle, family = "Times"), size = 2.75, data = axisLabels)+
+     #plot data
+     #stat_density2d(data = xy, aes(x= lodes, y = oct, fill = ..level..), geom = "polygon", n = 100)+
+     geom_point(aes(x=lodes, y=oct), data = xy, size = 1, alpha = 0.3)+
+     theme_void() +
+     theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "pt"))
+
+return(HsuPlot)
+}
+
+ggsave("plotHsuSummary.pdf", plot = plotHsuSummary(amsData), height = 4, width = 4, unit = "in")
+
+```
+
+```{r}
+
+#compute 95% confidence bootstrap clouds
+boots95 <- computeStationAMSBootStrap95("AME18_284", amsData)
+
+
+plotBootstrapsHsu("AME18_284", amsData)
+
+
+#plot 95% bootstrap clouds
+plotNetBoots(amsData, "AME18_284")
+
+# a list of station names for each core
+stationList <- amsData$station
+
+# Remove duplicate station names
+stationList <- unique(stationList, incomparables = FALSE)
+
+bootPlots <- computeAndPlotAllBootstraps(amsData, stationList, "AMS plots/equalAreaNets", "png")
+
+```
+
+
+```{r}
+
+# a list of station names for each core
+stationList <- amsData$station
+
+# Remove duplicate station names
+stationList <- unique(stationList, incomparables = FALSE)
+
+amsDataMeans <- computeStationMeans(amsData, stationList)
+
+ShapeVersusAnisotropy <- plotShapeVersusAnisotropy(amsData, gradient = "none")
+
+ggsave("shapeVersusAnisotropy.pdf", plot = ShapeVersusAnisotropy)
+
+plotHistogramLodes(amsDataMeans, binWidth = 0.2)
+
+
+plotShapeVersusAnisotropyBootstraps("AME18_284", amsData)
+
+
+# 
+
+```
+
+
+```{r}
+
+
+index = which(amsDataMeans$Name == "AME18_147")
+AME18_147 = amsDataMeans[index,]
+ellEllipsoidPlot(AME18_147$rotation, AME18_147$a)
+AME18_147
+amsDataMeans
+
+```
+
+
+```{r}
+#Load Geologic Map
+shp <- read_sf("shapeFiles/1_500_000_Interpreted_Bedrock_Geology__2014.shp")     
+shpCropped <- st_crop(shp, c(xmin=119.75, xmax=120.40, ymin=-21.50, ymax=-20.85))
+granitoids <-shpCropped[shpCropped$SUPERSUITE != "NA",]
+geoMap <- granitoids
+
+figTree <- granitoids[granitoids$UNITNAME == "Fig Tree Gneiss",]
+Joorina <- granitoids[granitoids$UNITNAME == "Joorina Granodiorite",]
+
+
+
+#Call function to plot strikes and dips on in map view
+mapStrikesAndDips <- plotMapStrikesDips(amsDataMeans, geoMap, onlyStat = FALSE)
+mapStrikesAndDips
+
+mapTrendsAndPlunges <- plotMapTrendsPlunges(amsDataMeans, geoMap)
+mapTrendsAndPlunges
+
+mapPlots <- plotMapPlots(amsDataMeans, geoMap, "AMS plots/equalAreaNets")
+mapPlots
+
+ggsave("Map_AMS_strikesAndDips.pdf", plot = mapStrikesAndDips)
+ggsave("Map_AMS_trendsAndPlunges.pdf", plot = mapTrendsAndPlunges)
+ggsave("Map_AMS_plots.pdf", plot = mapPlots, width = 20, height = 20, unit = "in")
+
+#potasiumRaster <- raster("potasiumRaster.tif")
+
+#plot(potasiumRaster)
+```
+
+
+```{r}
+plotShapeVersusAnisotropy(amsData, gradient = "lodes")
+plotShapeVersusAnisotropy(amsData, gradient = "oct")
+plotShapeVersusAnisotropy(amsData, gradient = "Km")
+plotShapeVersusAnisotropy(amsData, gradient = "none")
+
+plotShapeVersusKm(amsData, gradient = "lodes")
+plotShapeVersusKm(amsData, gradient = "oct")
+plotShapeVersusKm(amsData, gradient = "Km")
+shapeVersusKm <- plotShapeVersusKm(amsData, gradient = "none")
+
+ggsave("shapeVersusKm.pdf", shapeVersusKm)
+
+```
+
+
+```{R}
+     shp <- read_sf("shapeFiles/1_500_000_Interpreted_Bedrock_Geology__2014.shp")
+     shp2 <- st_read("shapeFiles/1_500_000_Interpreted_Bedrock_Geology__2014.shp")
+     
+
+     # Just plot the geometry
+     plot(st_geometry(shp))
+     
+     # Plot geometry colored categorically ( I think arbitrarily)
+     plot(st_geometry(shp), col = sf.colors(12, categorical = TRUE), border = 'grey', axes = TRUE)
+     
+     # Crop the shape file to a rectangle
+     
+     
+     # Use ggplot natively to make more specific plots!     
+     ggplot(shpCropped["SUPERSUITE"]) +
+          geom_sf(aes(fill = SUPERSUITE)
+     
+    
+     
+     shp <- read_sf("shapeFiles/1_500_000_Interpreted_Bedrock_Geology__2014.shp")     
+     
+     shpCropped <- st_crop(shp, c(xmin=119.75, xmax=120.40, ymin=-21.50, ymax=-20.85))
+     
+     granitoids <-shpCropped[shpCropped$SUPERSUITE != "NA",]
+     
+    blankMap =  ggplot(granitoids["SUPERSUITE"]) +
+          geom_sf(aes(fill = SUPERSUITE)) +
+          coord_sf(ylim=c(-20.85,-21.5),xlim=c(119.75,120.4), expand = FALSE) +
+          scale_fill_manual(values=c("Split Rock Supersuite" = "#F77D84", "Cleland Supersuite" = "#EEC0DA", "Emu Pool Supersuite" = "#E49DC5", "Tambina Supersuite" = "#DA78B1", "Callina Supersuite" = "#D557AC")) +
+          theme_bw()
+     
+    
+     ggsave("blankMtEdgar.pdf", blankMap)
+```
+
+
+
+
+```{r}
+shp <- read_sf("shapeFiles/1_500_000_Interpreted_Bedrock_Geology__2014.shp")     
+     shpCropped <- st_crop(shp, c(xmin=119.75, xmax=120.40, ymin=-21.50, ymax=-20.85))
+     granitoids <-shpCropped[shpCropped$SUPERSUITE != "NA",]
+
+
+geoMap <- granitoids
+
+mapLodes <- plotMapByProperty(amsDataMeans, property = "lodes", geoMap)
+
+mapLodes
+ggsave("mapLodes.pdf", mapLodes )
+
+plotMapByProperty(amsDataMeans, property = "oct", geoMap)
+mapKm <- plotMapByProperty(amsDataMeans, property = "Km", geoMap)
+mapKm
+ggsave("mapKm.pdf", mapKm)
+
+ggsave("mapStations.pdf", plotMapByProperty(amsDataMeans, property = "none", geoMap))
+
+plotOctVersusKm(amsData, gradient = "lodes")
+plotOctVersusKm(amsData, gradient = "oct")
+plotOctVersusKm(amsData, gradient = "Km")
+plotOctVersusKm(amsData, gradient = "none")
+
+plotLodesVersusKm(amsData, gradient = "lodes")
+plotLodesVersusKm(amsData, gradient = "oct")
+plotLodesVersusKm(amsData, gradient = "Km")
+plotLodesVersusKm(amsData, gradient = "none")
+
+
+?# ggsave("Strikes and Dips.pdf", plot2Save, device = "pdf", width = 20, height = 20, units = "in", dpi = 300)
+```
+
+```{r}
+coords <- cbind(geoMap$long, geoMap$lat)
+box <- bbox(coords)
+
+map <- SpatialPoints(data.frame(geoMap$long, geoMap$lat))
+interpData <- SpatialPointsDataFrame(data.frame(amsDataMeans$easting, amsDataMeans$northing), data.frame(log10(amsDataMeans$Km)), bbox = box)
+
+####
+
+library(spatstat)  # Used for the dirichlet tessellation function
+library(maptools)  # Used for conversion from SPDF to ppp
+library(raster)    # Used to clip out thiessen polygons
+library(tmap)
+
+# Create a tessellated surface
+th  <-  as(dirichlet(as.ppp(interpData)), "SpatialPolygons")
+
+# The dirichlet function does not carry over projection information
+# requiring that this information be added manually
+proj4string(th) <- proj4string(interpData)
+
+# The tessellated surface does not store attribute information
+# from the point data layer. We'll use the over() function (from the sp
+# package) to join the point attributes to the tesselated surface via
+# a spatial join. The over() function creates a dataframe that will need to
+# be added to the `th` object thus creating a SpatialPolygonsDataFrame object
+th.z     <- over(th, interpData, fn=mean)
+th.spdf  <-  SpatialPolygonsDataFrame(th, th.z)
+
+# Finally, we'll clip the tessellated  surface to the Texas boundaries
+#th.clp   <- raster::intersect(map,th.spdf)
+
+# Map the data
+
+
+tm_shape(th) + 
+  tm_polygons(col="Precip_in", palette="RdBu", auto.palette.mapping=FALSE,
+              title="Predicted precipitation \n(in inches)") +
+  tm_legend(legend.outside=TRUE)
+```
+
+```{r}
+
+amsDataMeansLocs <- list()
+for (i in 1:length(amsDataMeans$Name)){
+     amsDataMeansLocs[[i]] <- c(amsDataMeans$easting, amsDataMeans$northing)
+}
+
+array <- sapply(amsDataMeans$vector, function(s) s)
+
+test <- ipol(val = array, grid = amsDataMeansLocs)
+
+s <- seq(-20,-22,length.out = 100)
+e <- seq(-119, -121, length.out = 100)
+
+locs <- cbind(s,e)
+
+vals <- cbind(s, e, sapply(locs, function(c) test(c(locs[1], locs[2]))))
+
+```
+```{r}
+#Variogram analysis of strike
+dataSet <- amsDataMeans
+
+
+sd <- lapply(dataSet$rotation, function(s) geoStrikeDipDegFromCartesian(s[3,]))
+
+distanceAndAngle <- list()
+count = 1
+
+for ( i in 1:length(dataSet$Name)) {
+     if (i < length(dataSet$Name)){
+     for (j in i+1:length(dataSet$Name)){
+          distance <- ((dataSet$easting[i] - dataSet$easting[j])^2 + (dataSet$northing[i] - dataSet$northing[j])^2)^(1/2)
+          angle1 <- max(c(sd[[i]][1], sd[[j]][1]))
+          angle2 <- min(c(sd[[i]][1], sd[[j]][1]))
+          angleDiff <- angle1 - angle2
+          if (angleDiff > 180) {
+               angle1 <- angle1 - 180
+               angleDiff <- angle1 - angle2
+          }
+          if (angleDiff > 90) {
+               angleDiff <- 180 - angleDiff
+          }
+     }
+     }
+          
+          print(angleDiff)
+          
+          vari <- (angleDiff/2)^2
+          distanceAndAngle[[count]] <- c(distance, vari) 
+          count = count + 1
+          
+          
+     
+     }
+}
+
+distances <- sapply(distanceAndAngle, function(s) (s[1]))
+angles <- sapply(distanceAndAngle, function(s) (s[2]))
+
+angDists <- data.frame(cbind(distances, angles))
+
+ggplot(angDists) +
+     geom_point(aes(x=distances, y= angles)) +
+     coord_cartesian(xlim = c(0,.25))
+
+plot(distances, angles)
+
+```
+```{r}
+ellipsoids <- amsDataMeans$rotation
+as <- amsDataMeans$a
+easting <- amsDataMeans$easting
+northing <- amsDataMeans$northing
+location <- list()
+
+for (i in 1:length(easting)) {
+     location[[i]] <- c(easting[i], northing[i], 0)
+}
+
+ellEllipsoidPlot(ellipsoids, as, centers=location )
+
+#xmin=119.75, xmax=120.40, ymin=-21.50, ymax=-20.85)
+
+```
+```{r}
+dataSet = amsDataMeans
+
+station = dataSet$Name
+easting = dataSet$easting
+northing = dataSet$northing
+sd = lapply(dataSet$rotation, function(s) geoStrikeDipDegFromCartesian(s[3,]))
+strike = sapply(sd, function(s) s[1])
+dip = sapply(sd, function(s) s[2])
+tp = lapply(dataSet$rotation, function(s) geoTrendPlungeDegFromCartesian(lower(s[1,])))
+trend = sapply(tp, function(s) s[1])
+plunge = sapply(tp, function(s) s[2])
+lodes = sapply(dataSet$logA, function(s) ellLodeNu(s))
+oct = sapply(dataSet$logA, function(s) ellOctahedralShearStrain(s))
+Km = sapply(dataSet$Km, function(s) log10(s))
+
+
+
+dataFrameForExport <- data.frame(station, easting, northing, strike, dip, trend, plunge, lodes, oct, Km, stringsAsFactors = FALSE)
+
+write.table(dataFrameForExport, "test.csv", sep = ",")
+```
+
+```{r}
+
+easting = dataSet$easting
+northing = dataSet$northing
+down = replicate(length(dataSet$northing), 0)
+xyz = lapply(dataSet$rotation, function(s) lower(s[1,]))
+x = sapply(xyz, function(s) s[1])
+y = sapply(xyz, function(s) s[2])
+z = sapply(xyz, function(s) s[3])
+
+dataFrameQuiver = data.frame(easting, northing,down,x,y,z)
+write.table(dataFrameQuiver, "quiverLines.csv", sep = ",", row.names = FALSE)
+
+
+```
+```{r}
+
+ellEllipsoidPlot(list(rbind(c(1,0,0),c(0,1,0),c(0,0,1))), 
+                 list(c(2,0.2,0.2)),
+                 axesColor = c("black","black","black"),
+backgroundColor="white", curveColor="black")
+
+afterMaximizingWindow(rightName = "ProlateEllipsoid.png", zoom = 0.7)
+
+
+ellEllipsoidPlot(list(rbind(c(1,0,0),c(0,1,0),c(0,0,1))), 
+                 list(c(0.3,1.5,1.5)),
+                 axesColor = c("black","black","black"),
+backgroundColor="white", curveColor="black")
+
+afterMaximizingWindow(leftName = "OblateEllipsoid.png", zoom = 0.7)
+
+ellEllipsoidPlot(list(rbind(c(1,0,0),c(0,1,0),c(0,0,1))), 
+                 list(c(2,1,1/2)),
+                 axesColor = c("black","black","black"),
+backgroundColor="white", curveColor="black")
+
+afterMaximizingWindow(leftName = "TriaxialEllipsoid.png", zoom = 0.7)
+
+```
+
+```{r}
+namesNorthLimb = c( "AME16_140", "AME18_114", "AME18_117", "AME18_116") 
+                   
+                   #"AME19_093", "AME16_094", "AME16_097", "AME16_095", "AME16_096","AME18_018", "AME18_017")
+
+namesSouthLimb = c("AME18_104", "AME16_141", "AME18_015", "AME16_139", "AME18_111", "AME16_138", "AME18_242", "AME16_137")
+
+subsetData <- function(amsData,stationNames) {
+     amsData_subset = stationDataSubset(stationNames[1], amsData)
+     for (i in 2:length(stationNames)){
+          amsData_subset = rbind(amsData_subset, stationDataSubset(stationNames[i], amsData))
+     }
+     return(amsData_subset)
+}
+
+amsDataNorthLimb <- subsetData(amsData, namesNorthLimb)
+
+amsDataSouthLimb <- subsetData(amsData, namesSouthLimb)
+
+
+ggsave("northLimbNet.pdf", plotNet(amsDataNorthLimb, showFollin = TRUE), height = 4, width = 4, unit = "in")
+ggsave("southLimbNet.pdf",plotNet(amsDataSouthLimb, showFollin = TRUE),height = 4, width = 4, unit = "in")
+
+allFold = rbind(amsDataNorthLimb, amsDataSouthLimb)
+
+ggsave("FoldHsuSummary.pdf", plotHsuSummary(allFold), height = 4, width = 4, unit = "in")
+
+plotNetBootsAll(amsDataNorthLimb)
+plotNetBootsAll(amsDataSouthLimb)
+
+bootsDataNorth <- computeAMSBootStrap95(amsDataNorthLimb)
+bootsDataSouth <- computeAMSBootStrap95(amsDataSouthLimb)
+
+oriEqualVolumePlot(group = oriLineInPlaneGroup,  c(bootsDataNorth$rotation, bootsDataSouth$rotation), col = c(replicate(length(bootsDataNorth$rotation), "white"), replicate(length(bootsDataSouth$rotation), "blue")))
+
+
+northMean <- ellMean(bootsDataNorth$vector)
+northLineation <- northMean$rotation[3,]
+
+lineEqualAreaPlot(list(northLineation))
+
+southMean <- ellMean(bootsDataSouth$vector)
+southLineation <- southMean$rotation[3,]
+
+lineEqualAreaPlotTwo(list(northLineation), list(southLineation))
+
+foldAxis = cross(southLineation, northLineation)
+
+geoTrendPlungeDegFromCartesian(lower(foldAxis))
+
+lineEqualAreaPlotThree(list(northLineation), list(southLineation), list(foldAxis))
+
+```
+
+```{r}
+
+transect <- c("AME18_145",
+              "AME18_146",
+              "AME18_147",
+              "AME18_149",
+              "AME18_159",
+              "AME18_156",
+              "AME18_155")
+
+transectData = subsetData(amsData, transect)
+
+oriEqualVolumePlot(group = oriLineInPlaneGroup, c(transectData$rotation), col = hues(as.numeric(transectData$northing)))
+
+lines <- lapply(transectData$rotation, function(S) S[1,])
+
+lineEqualAreaPlot(lines, col = hues(as.numeric(transectData$northing)))
+
+oriGeodesicRegression(as.numeric(transectData$northing),transectData$rotation, oriLineInPlaneGroup, numSteps = 1000)
+
+
+
+
+```
+```{r}
+
+nose = c("AME18_018",
+         "AME16_142",
+         "AME16_144",
+         "AME18_020")
+
+noseBridge = c("AME18_120",
+         "AME18_092",
+         "AME16_091",
+         "AME18_165",
+         "AME18_167",
+         "AME16_090",
+         "AME18_168",
+         "AME18_131")
+
+noseData = subsetData(amsData, nose)
+
+ggsave("noseMtEdgar.pdf", plotNet(noseData, showFollin = FALSE), height = 4, width = 4, unit = "in")
+
+ggsave("noseHsu.pdf", plotHsu(noseData),height = 4, width = 4, unit = "in")
+
+noseBridgeData = subsetData(amsData, noseBridge)
+
+ggsave("noseBridgeMtEdgar.pdf", plotNet(noseBridgeData, showFollin = FALSE), height = 4, width = 4, unit = "in")
+
+ggsave("noseBridgeHsu.pdf", plotHsu(noseBridgeData),height = 4, width = 4, unit = "in")
+
+
+shp <- read_sf("shapeFiles/1_500_000_Interpreted_Bedrock_Geology__2014.shp")     
+     shpNose <- st_crop(shp, c(xmin=119.8719, xmax=120.0999, ymin=-21.3418, ymax=-21.1836))
+     noseGranitoids <-shpNose[shpNose$SUPERSUITE != "NA",]
+
+nosePlanesMap <- plotMapStrikesDips(amsDataMeans, shpNose, onlyStat = FALSE , xlims = c(119.8719,120.0999), ylims =  c(-21.3418,-21.1836))
+
+noseLinesMap <- plotMapTrendsPlunges(amsDataMeans, shpNose , xlims = c(119.8719,120.0999), ylims =  c(-21.3418,-21.1836), size = "small")
+
+ggsave("noseMapPlane.pdf", nosePlanesMap, useDingbats = FALSE)
+ggsave("noseMapLines.pdf", noseLinesMap, useDingbats = FALSE)
+
+```
+
+```{r}
+
+FigTree = c("AME16_145", "AME16_089", "AME16_078","AME16_077", "AME16_076", "AME16_075", "AME16_146","AME18_265")
+
+subsetData <- function(amsData,stationNames) {
+     amsData_subset = stationDataSubset(stationNames[1], amsData)
+     for (i in 2:length(stationNames)){
+          amsData_subset = rbind(amsData_subset, stationDataSubset(stationNames[i], amsData))
+     }
+     return(amsData_subset)
+}
+
+amsDataFigTree <- subsetData(amsData, FigTree)
+
+
+ggsave("FigTreeNet.pdf", plotNet(amsDataFigTree, showFollin = TRUE), height = 4, width = 4, unit = "in")
+
+
+ggsave("FigTreeHsuSummary.pdf", plotHsuSummary(amsDataFigTree), height = 4, width = 4, unit = "in")
+
+```
+
+```{r}
+
+FigTree2 = c("AME16_032","AME16_033","AME16_034","AME16_035","AME16_055")
+
+amsDataFigTree2 <- subsetData(amsData, FigTree2)
+
+
+ggsave("FigTreeNet2.pdf", plotNet(amsDataFigTree2, showFollin = TRUE), height = 4, width = 4, unit = "in")
+
+
+ggsave("FigTree2HsuSummary.pdf", plotHsuSummary(amsDataFigTree2), height = 4, width = 4, unit = "in")
+
+```
+
+```{r}
+
+BishopCreek <- c("AME18_148","AME18_149","AME18_159","AME18_156", "AME18_147","AME18_146","AME18_155","AME18_154", "AME18_152", "AME18_151","AME16_083")
+
+amsDataBishopCreek <- subsetData(amsData, BishopCreek)
+
+
+ggsave("BishopCreeekNet.pdf", plotNet(amsDataBishopCreek, showFollin = FALSE), height = 4, width = 4, unit = "in")
+
+
+ggsave("BishopCreekHsuSummary.pdf", plotHsuSummary(amsDataBishopCreek), height = 4, width = 4, unit = "in")
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+

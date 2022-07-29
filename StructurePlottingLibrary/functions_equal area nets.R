@@ -144,7 +144,7 @@ plotEqualAreaNet = function(plot = plotBlankEqualAreaNet(), points = NULL, curve
             if (is.null(colorBy) == FALSE){
                p = p + 
                geom_point(data = linesXY, aes(x= linX, y=linY, fill = colorBy), color = edgeColor[[i]], shape = shape[[i]], size = pointSize[[i]], alpha = pointAlpha[[i]], show.legend = showLegend)
-               }else{
+               } else {
                p = p + 
                geom_point(data = linesXY, aes(x= linX, y=linY), fill = color[[i]], color = edgeColor[[i]], shape = shape[[i]], size = pointSize[[i]], alpha = pointAlpha[[i]], show.legend = showLegend)
             }
